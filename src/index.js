@@ -176,6 +176,69 @@ export default function ({types: t}) {
         return !!path.node[EXTRACTED];
     }
 
+    function JSXOpeningElement(path, state) {
+        if (wasExtracted(path)) {
+            return;
+        }
+
+        const {file, opts} = state;
+        const moduleSourceName = getModuleSourceName(opts);
+        const name = path.get('name');
+        const element_name = name.node.name;
+
+        if (name.referencesImport(moduleSourceName, 'FormattedPlural')) {
+            file.log.warn(
+                `[React Intl] Line ${path.node.loc.start.line}: ` +
+                'Default messages are not extracted from ' +
+                '<FormattedPlural>, use <FormattedMessage> instead.'
+            );
+
+            return;
+        }
+
+        if (referencesImport(name, moduleSourceName, COMPONENT_NAMES) ||
+            COMPONENT_NAMES.some((name) => element_name === name)) {
+            const attributes = path.get('attributes')
+                .filter((attr) => attr.isJSXAttribute());
+
+            let descriptor = createMessageDescriptor(
+                attributes.map((attr) => [
+                    attr.get('name'),
+                    attr.get('value'),
+                ])
+            );
+
+            // In order for a default message to be extracted when
+            // declaring a JSX element, it must be done with standard
+            // `key=value` attributes. But it's completely valid to
+            // write `<FormattedMessage {...descriptor} />` or
+            // `<FormattedMessage id={dynamicId} />`, because it will be
+            // skipped here and extracted elsewhere. The descriptor will
+            // be extracted only if a `defaultMessage` prop exists.
+            if (descriptor.defaultMessage) {
+                // Evaluate the Message Descriptor values in a JSX
+                // context, then store it.
+                descriptor = evaluateMessageDescriptor(descriptor, {
+                    isJSXSource: true,
+                });
+
+                storeMessage(descriptor, path, state);
+
+                // Remove description since it's not used at runtime.
+                attributes.some((attr) => {
+                    const ketPath = attr.get('name');
+                    if (getMessageDescriptorKey(ketPath) === 'description') {
+                        attr.remove();
+                        return true;
+                    }
+                });
+
+                // Tag the AST node so we don't try to extract it twice.
+                tagAsExtracted(path);
+            }
+        }
+    }
+
     return {
         pre(file) {
             if (!file.has(MESSAGES)) {
@@ -185,9 +248,8 @@ export default function ({types: t}) {
 
         post(file) {
             const {opts} = this;
-            const {filename} = file.opts;
+            const {basename, filename} = file.opts;
 
-            const basename = p.basename(filename, p.extname(filename));
             const messages = file.get(MESSAGES);
             const descriptors = [...messages.values()];
             file.metadata['react-intl'] = {messages: descriptors};
@@ -214,75 +276,21 @@ export default function ({types: t}) {
         },
 
         visitor: {
-            JSXOpeningElement(path, state) {
-                if (wasExtracted(path)) {
-                    return;
-                }
+            JSXOpeningElement,
 
-                const {file, opts} = state;
-                const moduleSourceName = getModuleSourceName(opts);
-                const name = path.get('name');
-
-                if (name.referencesImport(moduleSourceName, 'FormattedPlural')) {
-                    file.log.warn(
-                        `[React Intl] Line ${path.node.loc.start.line}: ` +
-                        'Default messages are not extracted from ' +
-                        '<FormattedPlural>, use <FormattedMessage> instead.'
-                    );
-
-                    return;
-                }
-
-                if (referencesImport(name, moduleSourceName, COMPONENT_NAMES)) {
-                    const attributes = path.get('attributes')
-                        .filter((attr) => attr.isJSXAttribute());
-
-                    let descriptor = createMessageDescriptor(
-                        attributes.map((attr) => [
-                            attr.get('name'),
-                            attr.get('value'),
-                        ])
-                    );
-
-                    // In order for a default message to be extracted when
-                    // declaring a JSX element, it must be done with standard
-                    // `key=value` attributes. But it's completely valid to
-                    // write `<FormattedMessage {...descriptor} />` or
-                    // `<FormattedMessage id={dynamicId} />`, because it will be
-                    // skipped here and extracted elsewhere. The descriptor will
-                    // be extracted only if a `defaultMessage` prop exists.
-                    if (descriptor.defaultMessage) {
-                        // Evaluate the Message Descriptor values in a JSX
-                        // context, then store it.
-                        descriptor = evaluateMessageDescriptor(descriptor, {
-                            isJSXSource: true,
-                        });
-
-                        storeMessage(descriptor, path, state);
-
-                        // Remove description since it's not used at runtime.
-                        attributes.some((attr) => {
-                            const ketPath = attr.get('name');
-                            if (getMessageDescriptorKey(ketPath) === 'description') {
-                                attr.remove();
-                                return true;
-                            }
-                        });
-
-                        // Tag the AST node so we don't try to extract it twice.
-                        tagAsExtracted(path);
-                    }
-                }
+            JSXElement(path, state) {
+                JSXOpeningElement(path.get('openingElement'), state);
             },
 
             CallExpression(path, state) {
                 const moduleSourceName = getModuleSourceName(state.opts);
                 const callee = path.get('callee');
+                const callee_name = (callee.node.property || callee.node).name;
 
                 function assertObjectExpression(node) {
                     if (!(node && node.isObjectExpression())) {
                         throw path.buildCodeFrameError(
-                            `[React Intl] \`${callee.node.name}()\` must be ` +
+                            `[React Intl] \`${callee_name}()\` must be ` +
                             'called with an object expression with values ' +
                             'that are React Intl Message Descriptors, also ' +
                             'defined as object expressions.'
@@ -334,6 +342,18 @@ export default function ({types: t}) {
                     messagesObj.get('properties')
                         .map((prop) => prop.get('value'))
                         .forEach(processMessageObject);
+                } else if (FUNCTION_NAMES.some((name) => callee_name === name)) {
+                    const messagesObj = path.get('arguments')[0];
+                    if (messagesObj && messagesObj.isObjectExpression()) {
+                        messagesObj.get('properties')
+                            .map((prop) => prop.get('value'))
+                            .forEach(processMessageObject);
+                    }
+                } else if (callee_name === 'formatMessage') {
+                    const messagesObj = path.get('arguments')[0];
+                    if (messagesObj.isObjectExpression()) {
+                        processMessageObject(messagesObj);
+                    }
                 }
             },
         },
