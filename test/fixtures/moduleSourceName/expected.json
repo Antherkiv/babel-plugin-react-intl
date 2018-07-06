@@ -1,5 +1,15 @@
 [
   {
+    "id": "header",
+    "description": "The default message",
+    "defaultMessage": "Hello World!"
+  },
+  {
+    "id": "content",
+    "description": "Another message",
+    "defaultMessage": "Hello Nurse!"
+  },
+  {
     "id": "foo.bar.baz",
     "description": "The default message.",
     "defaultMessage": "Hello World!"

@@ -26,14 +26,12 @@ function _inherits(subClass, superClass) { if (typeof superClass !== "function" 
 // `react-i18n`.
 var msgs = (0, _reactIntl.defineMessages)({
     header: {
-        id: 'header',
-        defaultMessage: 'Hello World!',
-        description: 'The default message'
+        'id': 'header',
+        'defaultMessage': 'Hello World!'
     },
     content: {
-        id: 'content',
-        defaultMessage: 'Hello Nurse!',
-        description: 'Another message'
+        'id': 'content',
+        'defaultMessage': 'Hello Nurse!'
     }
 });
 
